@@ -105,9 +105,30 @@ CI 使用輕量的 UltraScale primitive behavioral models，驗證：
 
 Ubuntu 安裝 Icarus Verilog 後可在本機執行：
 
-```bash
-bash sim/run_iverilog.sh
+```console
+make SIMULATOR=iverilog sim
 ```
+
+Icarus 執行完成後會產生
+`build/iverilog/tb_ku115_delay_chain.vcd`。
+
+若電腦已安裝 Synopsys VCS 與 Verdi：
+
+```console
+make SIMULATOR=vcs sim
+make run_verdi
+```
+
+VCS 執行時 testbench 會呼叫 `$fsdbDumpfile` 與 `$fsdbDumpvars`，產生
+`build/vcs/tb_ku115_delay_chain.fsdb`；`run_verdi` 會同時開啟 VCS
+design database 與該 FSDB。可用 Makefile 變數覆寫工具或選項，例如：
+
+```console
+make SIMULATOR=vcs VCS=/tools/vcs/bin/vcs VERDI=/tools/verdi/bin/verdi sim
+```
+
+Icarus 不支援原生 FSDB，因此開源 CI 使用 VCD；FSDB 僅在
+`SIMULATOR=vcs` 時啟用。
 
 `sim/xilinx_ultrascale_behavioral.sv` 只模擬本專案使用到的 primitive
 功能，並以固定 5 ps/tap 讓 CI 結果可重現。它不能代表實際 silicon、
