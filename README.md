@@ -43,9 +43,12 @@ scripts/
   create_project.tcl
   run_post_impl_timing_sim.tcl
 sim/
+  Makefile                         VCS/Icarus 共用 simulation 流程
+  filelist.f                       兩種 simulator 共用 RTL file list
+  run-iverilog                     透過 make 執行 Icarus
+  run-vcs                          透過 make 執行 VCS
   xilinx_ultrascale_behavioral.sv  CI 專用的輕量 primitive models
   tb_ku115_delay_chain.sv          self-checking testbench
-  run_iverilog.sh                  開源 simulator 執行入口
   run_xsim.tcl                     Vivado UNISIM behavioral simulation
 .github/workflows/
   simulation.yml                   GitHub Actions
@@ -106,25 +109,27 @@ CI 使用輕量的 UltraScale primitive behavioral models，驗證：
 Ubuntu 安裝 Icarus Verilog 後可在本機執行：
 
 ```console
-make SIMULATOR=iverilog sim
+sim/run-iverilog
+# 或：make -C sim SIMULATOR=iverilog TESTBENCH=tb_ku115_delay_chain.sv sim
 ```
 
 Icarus 執行完成後會產生
-`build/iverilog/tb_ku115_delay_chain.vcd`。
+`sim/build/iverilog/tb_ku115_delay_chain.vcd`。
 
 若電腦已安裝 Synopsys VCS 與 Verdi：
 
 ```console
-make SIMULATOR=vcs sim
-make run_verdi
+sim/run-vcs
+make -C sim run_verdi
 ```
 
 VCS 執行時 testbench 會呼叫 `$fsdbDumpfile` 與 `$fsdbDumpvars`，產生
-`build/vcs/tb_ku115_delay_chain.fsdb`；`run_verdi` 會同時開啟 VCS
+`sim/build/vcs/tb_ku115_delay_chain.fsdb`；`run_verdi` 會同時開啟 VCS
 design database 與該 FSDB。可用 Makefile 變數覆寫工具或選項，例如：
 
 ```console
-make SIMULATOR=vcs VCS=/tools/vcs/bin/vcs VERDI=/tools/verdi/bin/verdi sim
+make -C sim SIMULATOR=vcs TESTBENCH=tb_ku115_delay_chain.sv \
+  VCS=/tools/vcs/bin/vcs VERDI=/tools/verdi/bin/verdi sim
 ```
 
 Icarus 不支援原生 FSDB，因此開源 CI 使用 VCD；FSDB 僅在
