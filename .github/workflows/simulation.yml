@@ -30,4 +30,8 @@ jobs:
 
       - name: Compile and run self-checking testbench
         if: hashFiles('sim/run_iverilog.sh') != ''
-        run: bash sim/run_iverilog.sh
+        run: make SIMULATOR=iverilog sim
+
+      - name: Check waveform output
+        if: hashFiles('sim/run_iverilog.sh') != ''
+        run: test -s build/iverilog/tb_ku115_delay_chain.vcd
