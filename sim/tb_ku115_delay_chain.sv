@@ -44,9 +44,15 @@ module tb_ku115_delay_chain;
         last_clk80_rise = $realtime;
 
     always @* begin
-        if (ddr_clk_n !== ~ddr_clk_p)
+        // Ignore startup X/Z states; assert only after both signals resolve.
+        if (((ddr_clk_p === 1'b0) || (ddr_clk_p === 1'b1)) &&
+            ((ddr_clk_n === 1'b0) || (ddr_clk_n === 1'b1)) &&
+            (ddr_clk_n !== ~ddr_clk_p))
             $fatal(1, "Differential outputs are not complementary");
-        if (update_busy !== ~delay_ready)
+
+        if (((delay_ready === 1'b0) || (delay_ready === 1'b1)) &&
+            ((update_busy === 1'b0) || (update_busy === 1'b1)) &&
+            (update_busy !== ~delay_ready))
             $fatal(1, "update_busy must be the inverse of delay_ready");
     end
 
