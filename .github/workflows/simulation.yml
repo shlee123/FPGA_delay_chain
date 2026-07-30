@@ -1,0 +1,33 @@
+name: Simulation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  behavioral:
+    name: Icarus behavioral simulation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bootstrap workflow
+        if: hashFiles('sim/run_iverilog.sh') == ''
+        run: echo "Simulation files are not present on this revision."
+
+      - name: Install Icarus Verilog
+        if: hashFiles('sim/run_iverilog.sh') != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes iverilog
+
+      - name: Compile and run self-checking testbench
+        if: hashFiles('sim/run_iverilog.sh') != ''
+        run: bash sim/run_iverilog.sh
