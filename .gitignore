@@ -1,0 +1,19 @@
+# Vivado generated files
+build/
+.Xil/
+*.jou
+*.log
+*.str
+*.xpr
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+
+# Editor/OS files
+*.swp
+*~
+.DS_Store
