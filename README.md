@@ -109,7 +109,7 @@ CI 使用輕量的 UltraScale primitive behavioral models，驗證：
 Ubuntu 安裝 Icarus Verilog 後可在本機執行：
 
 ```console
-sim/run-iverilog
+bash sim/run-iverilog
 # 或：make -C sim SIMULATOR=iverilog TESTBENCH=tb_ku115_delay_chain.sv sim
 ```
 
@@ -119,7 +119,7 @@ Icarus 執行完成後會產生
 若電腦已安裝 Synopsys VCS 與 Verdi：
 
 ```console
-sim/run-vcs
+bash sim/run-vcs
 make -C sim run_verdi
 ```
 
