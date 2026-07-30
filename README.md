@@ -1,0 +1,100 @@
+# FPGA_delay_chain
+
+Xilinx Kintex UltraScale `xcku115-flvb1760-1-c` 的四元件可程式化輸出
+delay cascade 範例。此專案以 80 MHz forwarded clock 為示範，使用
+`SEL[1:0]` 在執行期間選擇四種 programmable delay。
+
+## 架構
+
+UltraScale 的合法四元件 component-mode chain 必須交錯使用：
+
+```text
+ODELAYE3 MASTER
+  -> IDELAYE3 SLAVE_MIDDLE
+  -> ODELAYE3 SLAVE_MIDDLE
+  -> IDELAYE3 SLAVE_END
+```
+
+`SEL` 不會切換實體 cascade 級數。四個 delay element 永遠存在，
+控制器以 `DELAY_TYPE="VAR_LOAD"` 同時更新各級 tap。
+
+| `SEL` | 每級 programmable delay | 四級合計 |
+|---|---:|---:|
+| `00` | 約 312.5 ps | 約 1.25 ns |
+| `01` | 約 625 ps | 約 2.50 ns |
+| `10` | 約 937.5 ps | 約 3.75 ns |
+| `11` | 約 1000 ps | 約 4.00 ns |
+
+表中不含每個 delay element 與專用 cascade route 的固定 insertion
+delay。實際 pad delay 應以完成 placement/routing 後的 Vivado timing
+report 為準。
+
+## 目錄
+
+```text
+rtl/
+  ku115_odelay4_select.sv   四元件 delay chain 與更新 FSM
+  ku115_delay_chain_top.sv  ODDRE1、delay chain、OBUFDS 整合範例
+constraints/
+  ku115_delay_chain_template.xdc
+scripts/
+  create_project.tcl
+```
+
+## 主要 ports
+
+| Port | 頻率/型態 | 用途 |
+|---|---|---|
+| `clk80_in` | 80 MHz | `ODDRE1.C` 與 VAR_LOAD `cfg_clk` |
+| `refclk300_in` | 300 MHz | `IDELAYCTRL.REFCLK` |
+| `rst` | 高有效 | 啟動 component-mode reset/calibration |
+| `sel[1:0]` | 控制值 | 選擇四種 programmable delay |
+| `ddr_clk_p/n` | 80 MHz differential output | 延遲後的 forwarded clock |
+| `delay_ready` | status | 1 表示選定 delay 已載入完成 |
+| `update_busy` | status | 等於 `~delay_ready` |
+| `idelayctrl_ready` | status | IDELAYCTRL calibration 已完成 |
+| `sel_active[1:0]` | status | 目前真正生效的選項 |
+| `cal_error` | sticky status | calibration tap 檢查失敗 |
+
+若 `sel` 來自另一個 clock domain，來源端必須保持整個 2-bit 值不變，
+直到 `delay_ready` 再次成為 1。切換期間不得由接收端使用
+`ddr_clk_p/n` 取樣資料。
+
+在 `cfg_clk=80 MHz`、`IDELAYCTRL.RDY` 持續有效且最小
+2.5 ps/tap 的保守條件下，最壞的 `00 <-> 11` 更新預算約為
+3.8 us（包含 `SEL` 同步與偵測時間）。
+
+## 建立 Vivado project
+
+```tcl
+vivado -mode batch -source scripts/create_project.tcl
+```
+
+產生 project 後：
+
+1. 在 XDC 補上實際 PCB 的 package pins 與 I/O standards。
+2. 確認 80 MHz 與 300 MHz clocks 已穩定，再解除 `rst`。
+3. 執行 synthesis、placement 與 routing。
+4. 確認四個 `IDELAYE3/ODELAYE3` 位於同一 byte、沿合法方向排列。
+5. 執行 `report_drc`、`report_timing_summary` 與完整 output timing 分析。
+
+範例 XDC 提到 `BA17/BB17` 只作為可能的差動輸出候選；在使用前仍須
+核對板卡 schematic、bank voltage、I/O standard 及 cascade placement。
+
+## 重要限制
+
+- `CASCADE`、cascade 級數及 physical topology 是 implementation-time
+  屬性，不能由 runtime `SEL` 改變。
+- `DELAY_TYPE="FIXED"` 適合每個 bitstream 固定一種設定；若 runtime
+  需要四種選擇，應使用本專案的固定 topology 加 `VAR_LOAD`。
+- 不要在 delay-chain 輸出與 `OBUF/OBUFDS` 之間插入 LUT 或 fabric mux。
+- 本專案尚未選定實際板卡，因此 XDC 不包含可直接 sign-off 的
+  package pins、I/O standards 或 receiver setup/hold constraints。
+- 必須在有 UltraScale device support 的 Vivado 中完成 primitive
+  synthesis、placement、DRC 與 timing sign-off。
+
+## 參考資料
+
+- AMD UG571, *UltraScale Architecture SelectIO Resources*
+- AMD UG974, *UltraScale Architecture Libraries Guide*
+- AMD DS892, *Kintex UltraScale Data Sheet: DC and AC Switching Characteristics*
