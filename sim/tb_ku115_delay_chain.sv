@@ -43,13 +43,17 @@ module tb_ku115_delay_chain;
     always @(posedge clk80_in)
         last_clk80_rise = $realtime;
 
-    always @* begin
-        // Ignore startup X/Z states; assert only after both signals resolve.
+    always @(ddr_clk_p or ddr_clk_n) begin
+        // Let continuous assignments settle before checking both legs.
+        #0.001;
         if (((ddr_clk_p === 1'b0) || (ddr_clk_p === 1'b1)) &&
             ((ddr_clk_n === 1'b0) || (ddr_clk_n === 1'b1)) &&
             (ddr_clk_n !== ~ddr_clk_p))
             $fatal(1, "Differential outputs are not complementary");
+    end
 
+    always @(delay_ready or update_busy) begin
+        #0.001;
         if (((delay_ready === 1'b0) || (delay_ready === 1'b1)) &&
             ((update_busy === 1'b0) || (update_busy === 1'b1)) &&
             (update_busy !== ~delay_ready))
