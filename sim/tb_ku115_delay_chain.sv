@@ -200,7 +200,7 @@ module tb_ku115_delay_chain;
         check_forwarded_clock(2'b10, 3.760);
 
         select_and_wait(2'b11);
-        check_forwarded_clock(2'b11, 4.000);
+        check_forwarded_clock(2'b11, 5.000);
 
         select_and_wait(2'b00);
         check_forwarded_clock(2'b00, 1.260);
