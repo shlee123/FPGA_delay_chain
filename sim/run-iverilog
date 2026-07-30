@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sim_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+testbench="${1:-tb_ku115_delay_chain.sv}"
+if (($#)); then
+    shift
+fi
+
+exec make -C "${sim_dir}" \
+    SIMULATOR=iverilog \
+    TESTBENCH="${testbench}" \
+    sim "$@"
