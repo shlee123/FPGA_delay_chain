@@ -25,7 +25,11 @@ ODELAYE3 MASTER
 | `00` | 約 312.5 ps | 約 1.25 ns |
 | `01` | 約 625 ps | 約 2.50 ns |
 | `10` | 約 937.5 ps | 約 3.75 ns |
-| `11` | 約 1000 ps | 約 4.00 ns |
+| `11` | 約 1250 ps | 約 5.00 ns |
+
+第4設定使用 `TIME` mode 的 1250 ps 合法端點；控制器直接以
+0→1250 ps 的讀回 tap span 校正，不使用 1000 ps 外插，並在計算出的
+`CNTVALUEIN[8:0]` 溢位時設定 `cal_error`。
 
 表中不含每個 delay element 與專用 cascade route 的固定 insertion
 delay。實際 pad delay 應以完成 placement/routing 後的 Vivado timing
@@ -104,7 +108,7 @@ CI 使用輕量的 UltraScale primitive behavioral models，驗證：
 - `SEL=00 -> 01 -> 10 -> 11 -> 00`
 - 每次切換時 `delay_ready` 先降為 0，再於 3.8 us 預算內回到 1
 - `sel_active`、`update_busy` 與 `cal_error`
-- forwarded clock 的 80 MHz 週期、差動互補與四種可程式延遲
+- forwarded clock 的 80 MHz 週期、差動互補與四種可程式延遲（最高 5 ns）
 
 Ubuntu 安裝 Icarus Verilog 後可在本機執行：
 
@@ -173,6 +177,10 @@ receiver setup/hold、PCB delay 與量測結果為準。
 - 不要在 delay-chain 輸出與 `OBUF/OBUFDS` 之間插入 LUT 或 fabric mux。
 - 本專案尚未選定實際板卡，因此 XDC 不包含可直接 sign-off 的
   package pins、I/O standards 或 receiver setup/hold constraints。
+- 5 ns 是 programmable delay 合計，不是 pipeline latency；80 MHz 下
+  約等於 144° 相位位移，外部 receiver setup/hold 必須重新檢查。
+- 1250 ps 位於單一 delay element 的設定上緣，需確認 `cal_error=0`，
+  並以 routed timing/SDF 檢查 PVT、量化與固定 insertion delay。
 - 必須在有 UltraScale device support 的 Vivado 中完成 primitive
   synthesis、placement、DRC 與 timing sign-off。
 

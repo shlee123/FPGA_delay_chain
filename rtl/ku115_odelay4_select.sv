@@ -16,7 +16,7 @@
 //   2'b00 : 4 x  312.5 ps = 1.25 ns
 //   2'b01 : 4 x  625.0 ps = 2.50 ns
 //   2'b10 : 4 x  937.5 ps = 3.75 ns
-//   2'b11 : 4 x 1000.0 ps = 4.00 ns
+//   2'b11 : 4 x 1250.0 ps = 5.00 ns
 //
 // IMPORTANT:
 // 1. UltraScale cannot directly cascade four ODELAYE3 primitives.  The
@@ -71,26 +71,26 @@ module ku115_odelay4_select (
         end
     endfunction
 
-    // Scale a calibrated 1000-ps tap span by NUM/16 with rounding.
-    // NUM = 5, 10, 15, 16 gives 312.5, 625, 937.5, 1000 ps.
-    function automatic [8:0] scale_span_16;
+    // Scale a calibrated 1250-ps tap span by NUM/4 with rounding.
+    // NUM = 1, 2, 3, 4 gives 312.5, 625, 937.5, 1250 ps.
+    function automatic [8:0] scale_span_4;
         input [8:0] span;
-        input [4:0] num;
-        reg   [14:0] product;
+        input [2:0] num;
+        reg   [11:0] product;
         begin
-            product       = (span * num) + 15'd8;
-            scale_span_16 = product >> 4;
+            product      = (span * num) + 12'd2;
+            scale_span_4 = product >> 2;
         end
     endfunction
 
-    function automatic [4:0] sel_numerator;
+    function automatic [2:0] sel_numerator;
         input [1:0] sel_i;
         begin
             case (sel_i)
-                2'b00: sel_numerator = 5'd5;
-                2'b01: sel_numerator = 5'd10;
-                2'b10: sel_numerator = 5'd15;
-                default: sel_numerator = 5'd16;
+                2'b00: sel_numerator = 3'd1;
+                2'b01: sel_numerator = 3'd2;
+                2'b10: sel_numerator = 3'd3;
+                default: sel_numerator = 3'd4;
             endcase
         end
     endfunction
@@ -103,6 +103,17 @@ module ku115_odelay4_select (
         begin
             sum       = {1'b0, a} + {1'b0, b};
             sat_add_9 = sum[9] ? 9'h1ff : sum[8:0];
+        end
+    endfunction
+
+    // Flag a target that cannot be represented by CNTVALUEIN[8:0].
+    function automatic add_overflows_9;
+        input [8:0] a;
+        input [8:0] b;
+        reg   [9:0] sum;
+        begin
+            sum             = {1'b0, a} + {1'b0, b};
+            add_overflows_9 = sum[9];
         end
     endfunction
 
@@ -161,7 +172,7 @@ module ku115_odelay4_select (
     reg       load_all;
 
     reg [1:0] sel_work;
-    reg [4:0] numerator;
+    reg [2:0] numerator;
 
     reg [8:0] cnt_in_0;
     reg [8:0] cnt_in_1;
@@ -185,8 +196,8 @@ module ku115_odelay4_select (
 
     reg [8:0] odelay_zero;
     reg [8:0] idelay_align;
-    reg [8:0] odelay_span_1000;
-    reg [8:0] idelay_span_1000;
+    reg [8:0] odelay_span_1250;
+    reg [8:0] idelay_span_1250;
 
     wire targets_reached;
     assign targets_reached = (cur_0 == target_0) &&
@@ -206,7 +217,7 @@ module ku115_odelay4_select (
             cal_error           <= 1'b0;
             sel_active          <= 2'b00;
             sel_work            <= 2'b00;
-            numerator           <= 5'd5;
+            numerator           <= 3'd1;
             cnt_in_0            <= 9'd0;
             cnt_in_1            <= 9'd0;
             cnt_in_2            <= 9'd0;
@@ -221,8 +232,8 @@ module ku115_odelay4_select (
             target_3            <= 9'd0;
             odelay_zero         <= 9'd0;
             idelay_align        <= 9'd0;
-            odelay_span_1000    <= 9'd0;
-            idelay_span_1000    <= 9'd0;
+            odelay_span_1250    <= 9'd0;
+            idelay_span_1250    <= 9'd0;
         end else begin
             load_all <= 1'b0;
 
@@ -275,8 +286,8 @@ module ku115_odelay4_select (
                 ST_CAPTURE: begin
                     // Initial programmed values:
                     //   stage 0/1 = 0 ps
-                    //   stage 2/3 = 1000 ps
-                    // Their differences establish nominal taps per 1000 ps;
+                    //   stage 2/3 = 1250 ps
+                    // Their differences establish nominal taps per 1250 ps;
                     // the IDELAY subtraction also removes Align_Delay.
                     if ((cnt_out_2 <= cnt_out_0) ||
                         (cnt_out_3 <= cnt_out_1)) begin
@@ -286,8 +297,8 @@ module ku115_odelay4_select (
                     end else begin
                         odelay_zero      <= cnt_out_0;
                         idelay_align     <= cnt_out_1;
-                        odelay_span_1000 <= cnt_out_2 - cnt_out_0;
-                        idelay_span_1000 <= cnt_out_3 - cnt_out_1;
+                        odelay_span_1250 <= cnt_out_2 - cnt_out_0;
+                        idelay_span_1250 <= cnt_out_3 - cnt_out_1;
 
                         cur_0 <= cnt_out_0;
                         cur_1 <= cnt_out_1;
@@ -307,20 +318,34 @@ module ku115_odelay4_select (
                     // modifying a TIME-mode delay line.
                     delay_ready <= 1'b0;
                     if (wait_count == 7'd9) begin
-                        target_0 <= sat_add_9(
-                            odelay_zero,
-                            scale_span_16(odelay_span_1000, numerator));
-                        target_1 <= sat_add_9(
-                            idelay_align,
-                            scale_span_16(idelay_span_1000, numerator));
-                        target_2 <= sat_add_9(
-                            odelay_zero,
-                            scale_span_16(odelay_span_1000, numerator));
-                        target_3 <= sat_add_9(
-                            idelay_align,
-                            scale_span_16(idelay_span_1000, numerator));
-                        wait_count <= 7'd0;
-                        state      <= ST_SET_VALUE;
+                        // 1250 ps is the legal TIME-mode endpoint. Reject a
+                        // calibrated endpoint that would overflow 9-bit taps
+                        // instead of silently accepting the saturated value.
+                        if (add_overflows_9(
+                                odelay_zero,
+                                scale_span_4(odelay_span_1250, numerator)) ||
+                            add_overflows_9(
+                                idelay_align,
+                                scale_span_4(idelay_span_1250, numerator))) begin
+                            cal_error   <= 1'b1;
+                            delay_ready <= 1'b0;
+                            state       <= ST_ERROR;
+                        end else begin
+                            target_0 <= sat_add_9(
+                                odelay_zero,
+                                scale_span_4(odelay_span_1250, numerator));
+                            target_1 <= sat_add_9(
+                                idelay_align,
+                                scale_span_4(idelay_span_1250, numerator));
+                            target_2 <= sat_add_9(
+                                odelay_zero,
+                                scale_span_4(odelay_span_1250, numerator));
+                            target_3 <= sat_add_9(
+                                idelay_align,
+                                scale_span_4(idelay_span_1250, numerator));
+                            wait_count <= 7'd0;
+                            state      <= ST_SET_VALUE;
+                        end
                     end else begin
                         wait_count <= wait_count + 7'd1;
                     end
@@ -487,12 +512,12 @@ module ku115_odelay4_select (
         .RST          (delay_rst)
     );
 
-    // Stage 2: second slave, initial calibration point 1000 ps.
+    // Stage 2: second slave, initial calibration point 1250 ps.
     ODELAYE3 #(
         .CASCADE          ("SLAVE_MIDDLE"),
         .DELAY_FORMAT     ("TIME"),
         .DELAY_TYPE       ("VAR_LOAD"),
-        .DELAY_VALUE      (1000),
+        .DELAY_VALUE      (1250),
         .IS_CLK_INVERTED  (1'b0),
         .IS_RST_INVERTED  (1'b0),
         .REFCLK_FREQUENCY (300.0),
@@ -514,13 +539,13 @@ module ku115_odelay4_select (
         .RST          (delay_rst)
     );
 
-    // Stage 3: final slave, initial calibration point 1000 ps.
+    // Stage 3: final slave, initial calibration point 1250 ps.
     IDELAYE3 #(
         .CASCADE          ("SLAVE_END"),
         .DELAY_FORMAT     ("TIME"),
         .DELAY_SRC        ("DATAIN"),
         .DELAY_TYPE       ("VAR_LOAD"),
-        .DELAY_VALUE      (1000),
+        .DELAY_VALUE      (1250),
         .IS_CLK_INVERTED  (1'b0),
         .IS_RST_INVERTED  (1'b0),
         .REFCLK_FREQUENCY (300.0),
