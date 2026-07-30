@@ -1,5 +1,7 @@
 # FPGA_delay_chain
 
+[![Simulation](https://github.com/shlee123/FPGA_delay_chain/actions/workflows/simulation.yml/badge.svg)](https://github.com/shlee123/FPGA_delay_chain/actions/workflows/simulation.yml)
+
 Xilinx Kintex UltraScale `xcku115-flvb1760-1-c` 的四元件可程式化輸出
 delay cascade 範例。此專案以 80 MHz forwarded clock 為示範，使用
 `SEL[1:0]` 在執行期間選擇四種 programmable delay。
@@ -39,6 +41,14 @@ constraints/
   ku115_delay_chain_template.xdc
 scripts/
   create_project.tcl
+  run_post_impl_timing_sim.tcl
+sim/
+  xilinx_ultrascale_behavioral.sv  CI 專用的輕量 primitive models
+  tb_ku115_delay_chain.sv          self-checking testbench
+  run_iverilog.sh                  開源 simulator 執行入口
+  run_xsim.tcl                     Vivado UNISIM behavioral simulation
+.github/workflows/
+  simulation.yml                   GitHub Actions
 ```
 
 ## 主要 ports
@@ -80,6 +90,53 @@ vivado -mode batch -source scripts/create_project.tcl
 
 範例 XDC 提到 `BA17/BB17` 只作為可能的差動輸出候選；在使用前仍須
 核對板卡 schematic、bank voltage、I/O standard 及 cascade placement。
+
+## Simulation
+
+### 1. GitHub Actions／Icarus behavioral simulation
+
+CI 使用輕量的 UltraScale primitive behavioral models，驗證：
+
+- reset 與 `IDELAYCTRL.RDY` 啟動流程
+- `SEL=00 -> 01 -> 10 -> 11 -> 00`
+- 每次切換時 `delay_ready` 先降為 0，再於 3.8 us 預算內回到 1
+- `sel_active`、`update_busy` 與 `cal_error`
+- forwarded clock 的 80 MHz 週期、差動互補與四種可程式延遲
+
+Ubuntu 安裝 Icarus Verilog 後可在本機執行：
+
+```bash
+bash sim/run_iverilog.sh
+```
+
+`sim/xilinx_ultrascale_behavioral.sv` 只模擬本專案使用到的 primitive
+功能，並以固定 5 ps/tap 讓 CI 結果可重現。它不能代表實際 silicon、
+PVT、IOB/cascade 固定 insertion delay 或 placement/routing。
+
+### 2. Vivado UNISIM behavioral simulation
+
+安裝含 Kintex UltraScale device support 的 Vivado 後執行：
+
+```tcl
+vivado -mode batch -source sim/run_xsim.tcl
+```
+
+此流程不載入 CI 的輕量 models，而是使用 Vivado 內建 UNISIM。
+Testbench 仍驗證控制流程、3.8 us 更新預算、clock period 與 status；
+programmable delay 的精確 CI model 數值檢查只在
+`OPEN_SOURCE_SIM` 定義下啟用。
+
+### 3. Post-implementation timing simulation
+
+先補齊板級 XDC，並完成 `synth_1`、`impl_1` 與 route，再執行：
+
+```tcl
+vivado -mode batch -source scripts/run_post_impl_timing_sim.tcl
+```
+
+這一層才包含實際 netlist、placement/routing 與 SDF timing。最終的
+IO timing sign-off 仍須以 routed design 的 `report_timing`、
+receiver setup/hold、PCB delay 與量測結果為準。
 
 ## 重要限制
 
