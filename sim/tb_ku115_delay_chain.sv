@@ -58,26 +58,35 @@ module tb_ku115_delay_chain;
     always @(posedge clk80_in)
         last_clk80_rise = $realtime;
 
-    always @* begin
-        if (ddr_clk_n !== ~ddr_clk_p)
+    always @(ddr_clk_p or ddr_clk_n) begin
+        // Let continuous assignments settle before checking both legs.
+        #0.001;
+        if (!rst &&
+            ((ddr_clk_p === 1'b0) || (ddr_clk_p === 1'b1)) &&
+            ((ddr_clk_n === 1'b0) || (ddr_clk_n === 1'b1)) &&
+            (ddr_clk_n !== ~ddr_clk_p))
             $fatal(1, "Differential outputs are not complementary");
-        if (update_busy !== ~delay_ready)
+    end
+
+    always @(delay_ready or update_busy) begin
+        #0.001;
+        if (((delay_ready === 1'b0) || (delay_ready === 1'b1)) &&
+            ((update_busy === 1'b0) || (update_busy === 1'b1)) &&
+            (update_busy !== ~delay_ready))
             $fatal(1, "update_busy must be the inverse of delay_ready");
     end
 
     task automatic wait_initial_ready;
+        integer wait_cycles;
         begin
-            fork : initial_ready_or_timeout
-                begin
-                    @(posedge delay_ready);
-                end
-                begin
-                    #20000;
-                    $fatal(1, "Timeout waiting for initial delay calibration");
-                end
-            join_any
-            disable initial_ready_or_timeout;
+            wait_cycles = 0;
+            while ((delay_ready !== 1'b1) && (wait_cycles < 1600)) begin
+                @(posedge clk80_in);
+                wait_cycles = wait_cycles + 1;
+            end
 
+            if (delay_ready !== 1'b1)
+                $fatal(1, "Timeout waiting for initial delay calibration");
             if (!idelayctrl_ready)
                 $fatal(1, "delay_ready asserted before IDELAYCTRL.RDY");
             if (cal_error)
@@ -136,35 +145,30 @@ module tb_ku115_delay_chain;
         realtime low_started;
         realtime low_finished;
         realtime low_time;
+        integer wait_cycles;
         begin
             @(negedge clk80_in);
             sel = requested_sel;
 
-            fork : ready_low_or_timeout
-                begin
-                    @(negedge delay_ready);
-                    low_started = $realtime;
-                end
-                begin
-                    #1000;
-                    $fatal(1, "delay_ready did not fall for SEL=%b",
-                           requested_sel);
-                end
-            join_any
-            disable ready_low_or_timeout;
+            wait_cycles = 0;
+            while ((delay_ready !== 1'b0) && (wait_cycles < 80)) begin
+                @(posedge clk80_in);
+                wait_cycles = wait_cycles + 1;
+            end
+            if (delay_ready !== 1'b0)
+                $fatal(1, "delay_ready did not fall for SEL=%b",
+                       requested_sel);
+            low_started = $realtime;
 
-            fork : ready_high_or_timeout
-                begin
-                    @(posedge delay_ready);
-                    low_finished = $realtime;
-                end
-                begin
-                    #4000;
-                    $fatal(1, "delay_ready did not recover for SEL=%b",
-                           requested_sel);
-                end
-            join_any
-            disable ready_high_or_timeout;
+            wait_cycles = 0;
+            while ((delay_ready !== 1'b1) && (wait_cycles < 320)) begin
+                @(posedge clk80_in);
+                wait_cycles = wait_cycles + 1;
+            end
+            if (delay_ready !== 1'b1)
+                $fatal(1, "delay_ready did not recover for SEL=%b",
+                       requested_sel);
+            low_finished = $realtime;
 
             low_time = low_finished - low_started;
             if (low_time > 3800.0)
