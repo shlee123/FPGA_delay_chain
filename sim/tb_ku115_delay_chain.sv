@@ -16,6 +16,21 @@ module tb_ku115_delay_chain;
 
     realtime last_clk80_rise;
 
+    initial begin : waveform_dump
+        string wave_file;
+`ifdef DUMP_FSDB
+        if (!$value$plusargs("FSDB_FILE=%s", wave_file))
+            wave_file = "build/vcs/tb_ku115_delay_chain.fsdb";
+        $fsdbDumpfile(wave_file);
+        $fsdbDumpvars(0, tb_ku115_delay_chain, "+all");
+`elsif DUMP_VCD
+        if (!$value$plusargs("WAVE_FILE=%s", wave_file))
+            wave_file = "build/iverilog/tb_ku115_delay_chain.vcd";
+        $dumpfile(wave_file);
+        $dumpvars(0, tb_ku115_delay_chain);
+`endif
+    end
+
     ku115_delay_chain_top dut (
         .clk80_in          (clk80_in),
         .refclk300_in      (refclk300_in),
@@ -46,7 +61,8 @@ module tb_ku115_delay_chain;
     always @(ddr_clk_p or ddr_clk_n) begin
         // Let continuous assignments settle before checking both legs.
         #0.001;
-        if (((ddr_clk_p === 1'b0) || (ddr_clk_p === 1'b1)) &&
+        if (!rst &&
+            ((ddr_clk_p === 1'b0) || (ddr_clk_p === 1'b1)) &&
             ((ddr_clk_n === 1'b0) || (ddr_clk_n === 1'b1)) &&
             (ddr_clk_n !== ~ddr_clk_p))
             $fatal(1, "Differential outputs are not complementary");
