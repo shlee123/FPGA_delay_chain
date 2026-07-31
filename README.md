@@ -2,9 +2,11 @@
 
 [![Simulation](https://github.com/shlee123/FPGA_delay_chain/actions/workflows/simulation.yml/badge.svg)](https://github.com/shlee123/FPGA_delay_chain/actions/workflows/simulation.yml)
 
-Xilinx Kintex UltraScale `xcku115-flvb1760-1-c` 的四元件可程式化輸出
-delay cascade 範例。此專案以 80 MHz forwarded clock 為示範，使用
-`SEL[1:0]` 在執行期間選擇四種 programmable delay。
+Xilinx Kintex UltraScale `xcku115-flvb1760-1-c` 的四元件可程式化
+IODELAY cascade 範例。此專案同時示範 80 MHz forwarded-clock 的輸出
+delay，以及由 input port 經 IBUF 進入 IODELAY cascade 後回到 fabric 的
+輸入 delay；兩條路徑都使用 `SEL[1:0]` 在執行期間選擇四種 programmable
+delay。
 
 ## 架構
 
@@ -15,6 +17,16 @@ ODELAYE3 MASTER
   -> IDELAYE3 SLAVE_MIDDLE
   -> ODELAYE3 SLAVE_MIDDLE
   -> IDELAYE3 SLAVE_END
+
+由 input port 起始的路徑則從 `IBUF` 接到 IDELAYE3 MASTER，交錯方向相反：
+
+```text
+data_in (input port) -> IBUF -> IDELAYE3 MASTER
+  -> ODELAYE3 SLAVE_MIDDLE
+  -> IDELAYE3 SLAVE_MIDDLE
+  -> ODELAYE3 SLAVE_END
+  -> return path -> data_to_fabric
+```
 ```
 
 `SEL` 不會切換實體 cascade 級數。四個 delay element 永遠存在，
@@ -40,7 +52,8 @@ report 為準。
 ```text
 rtl/
   ku115_odelay4_select.sv   四元件 delay chain 與更新 FSM
-  ku115_delay_chain_top.sv  ODDRE1、delay chain、OBUFDS 整合範例
+  ku115_idelay4_select.sv   四元件 input-delay chain 與更新 FSM
+  ku115_delay_chain_top.sv  ODDRE1/OBUFDS 與 IBUF/input-delay 整合範例
 constraints/
   ku115_delay_chain_template.xdc
 scripts/
@@ -67,15 +80,20 @@ sim/
 | `rst` | 高有效 | 啟動 component-mode reset/calibration |
 | `sel[1:0]` | 控制值 | 選擇四種 programmable delay |
 | `ddr_clk_p/n` | 80 MHz differential output | 延遲後的 forwarded clock |
+| `data_in` | single-ended input | 經 IBUF 輸入 input-delay cascade 的信號 |
+| `data_to_fabric` | fabric signal | input-delay cascade 的延遲後輸出 |
 | `delay_ready` | status | 1 表示選定 delay 已載入完成 |
 | `update_busy` | status | 等於 `~delay_ready` |
 | `idelayctrl_ready` | status | IDELAYCTRL calibration 已完成 |
 | `sel_active[1:0]` | status | 目前真正生效的選項 |
 | `cal_error` | sticky status | calibration tap 檢查失敗 |
+| `input_delay_ready` / `input_update_busy` | status | input-delay chain 的 ready/busy |
+| `input_idelayctrl_ready` | status | input chain 的 IDELAYCTRL calibration 已完成 |
+| `input_sel_active` / `input_cal_error` | status | input chain 的 active SEL / sticky error |
 
 若 `sel` 來自另一個 clock domain，來源端必須保持整個 2-bit 值不變，
-直到 `delay_ready` 再次成為 1。切換期間不得由接收端使用
-`ddr_clk_p/n` 取樣資料。
+直到 `delay_ready` 與 `input_delay_ready` 都再次成為 1。切換期間不得由
+接收端使用 `ddr_clk_p/n` 取樣資料，也不得使用 `data_to_fabric`。
 
 在 `cfg_clk=80 MHz`、`IDELAYCTRL.RDY` 持續有效且最小
 2.5 ps/tap 的保守條件下，最壞的 `00 <-> 11` 更新預算約為
@@ -92,7 +110,7 @@ vivado -mode batch -source scripts/create_project.tcl
 1. 在 XDC 補上實際 PCB 的 package pins 與 I/O standards。
 2. 確認 80 MHz 與 300 MHz clocks 已穩定，再解除 `rst`。
 3. 執行 synthesis、placement 與 routing。
-4. 確認四個 `IDELAYE3/ODELAYE3` 位於同一 byte、沿合法方向排列。
+4. 確認每條四元件 `IDELAYE3/ODELAYE3` chain 位於同一 byte、沿合法方向排列。
 5. 執行 `report_drc`、`report_timing_summary` 與完整 output timing 分析。
 
 範例 XDC 提到 `BA17/BB17` 只作為可能的差動輸出候選；在使用前仍須
@@ -106,9 +124,10 @@ CI 使用輕量的 UltraScale primitive behavioral models，驗證：
 
 - reset 與 `IDELAYCTRL.RDY` 啟動流程
 - `SEL=00 -> 01 -> 10 -> 11 -> 00`
-- 每次切換時 `delay_ready` 先降為 0，再於 3.8 us 預算內回到 1
-- `sel_active`、`update_busy` 與 `cal_error`
-- forwarded clock 的 80 MHz 週期、差動互補與四種可程式延遲（最高 5 ns）
+- 每次切換時兩條路徑的 `delay_ready` 先降為 0，再於 3.8 us 預算內回到 1
+- output/input 的 `sel_active`、`update_busy` 與 `cal_error`
+- forwarded clock 的 80 MHz 週期、差動互補，以及 input/output 兩條路徑的
+  四種可程式延遲（最高 5 ns）
 
 Ubuntu 安裝 Icarus Verilog 後可在本機執行：
 
@@ -175,6 +194,12 @@ receiver setup/hold、PCB delay 與量測結果為準。
 - `DELAY_TYPE="FIXED"` 適合每個 bitstream 固定一種設定；若 runtime
   需要四種選擇，應使用本專案的固定 topology 加 `VAR_LOAD`。
 - 不要在 delay-chain 輸出與 `OBUF/OBUFDS` 之間插入 LUT 或 fabric mux。
+- `data_in` 必須直接由 `IBUF` 餵入 input chain 的 IDELAYE3 MASTER；不要在
+  兩者之間插入 LUT 或 fabric mux。
+- 每個使用 IODELAY 的 I/O bank 只能使用一個 IDELAYCTRL reset/calibration
+  domain。本範例的 input/output chain 各自帶有一個 IDELAYCTRL，因此實作時
+  應將兩條 chain 放到不同的 I/O bank，或將設計整合為同一個 bank-level
+  IDELAYCTRL controller；不可在同一 bank 讓兩個 controller 獨立 reset。
 - 本專案尚未選定實際板卡，因此 XDC 不包含可直接 sign-off 的
   package pins、I/O standards 或 receiver setup/hold constraints。
 - 5 ns 是 programmable delay 合計，不是 pipeline latency；80 MHz 下
