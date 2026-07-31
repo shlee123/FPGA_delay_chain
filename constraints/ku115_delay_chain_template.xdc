@@ -35,6 +35,18 @@ set_clock_groups -asynchronous \
 # set_property IOSTANDARD <DIFF_IOSTANDARD> \
 #     [get_ports {ddr_clk_p ddr_clk_n}]
 
+# Input-delay cascade source.  Select a single-ended input pin whose I/O bank
+# can contain the four-element input component-mode chain.  Do not constrain
+# data_to_fabric as an external receiver: it is the delayed fabric-side signal
+# of this integration example.
+#
+# set_property PACKAGE_PIN <DATA_IN_PIN>   [get_ports data_in]
+# set_property IOSTANDARD  <DATA_IN_IOSTD> [get_ports data_in]
+#
+# The output and input chains each instantiate an IDELAYCTRL.  Allocate their
+# I/O pins to different I/O banks, or refactor the design to share one bank's
+# IDELAYCTRL reset/calibration domain before placing them in the same bank.
+
 # rst and sel can be driven by internal registers instead of external pins.
 # If they are external, add PACKAGE_PIN/IOSTANDARD constraints here.
 
