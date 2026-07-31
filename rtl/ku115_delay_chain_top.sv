@@ -10,6 +10,8 @@ module ku115_delay_chain_top (
     input  wire       refclk300_in,
     input  wire       rst,
     input  wire [1:0] sel,
+    // Input-port path: IBUF -> IDELAY/ODELAY component-mode cascade -> fabric.
+    input  wire       data_in,
 
     output wire       ddr_clk_p,
     output wire       ddr_clk_n,
@@ -17,13 +19,20 @@ module ku115_delay_chain_top (
     output wire       update_busy,
     output wire       idelayctrl_ready,
     output wire [1:0] sel_active,
-    output wire       cal_error
+    output wire       cal_error,
+    output wire       data_to_fabric,
+    output wire       input_delay_ready,
+    output wire       input_update_busy,
+    output wire       input_idelayctrl_ready,
+    output wire [1:0] input_sel_active,
+    output wire       input_cal_error
 );
 
     wire clk80;
     wire refclk300;
     wire fwd_clk_raw;
     wire fwd_clk_delayed;
+    wire data_in_buffered;
 
     BUFG u_bufg_clk80 (
         .I (clk80_in),
@@ -70,6 +79,28 @@ module ku115_delay_chain_top (
         .I  (fwd_clk_delayed),
         .O  (ddr_clk_p),
         .OB (ddr_clk_n)
+    );
+
+    // Keep the input-port connection in the I/O path.  The output of the
+    // four-element cascade is a fabric signal; do not insert a LUT or fabric
+    // mux between this IBUF and u_input_delay_chain.
+    IBUF u_data_in_ibuf (
+        .I (data_in),
+        .O (data_in_buffered)
+    );
+
+    ku115_idelay4_select u_input_delay_chain (
+        .data_in          (data_in_buffered),
+        .cfg_clk          (clk80),
+        .refclk_300       (refclk300),
+        .rst              (rst),
+        .sel              (sel),
+        .data_out         (data_to_fabric),
+        .delay_ready      (input_delay_ready),
+        .update_busy      (input_update_busy),
+        .idelayctrl_ready (input_idelayctrl_ready),
+        .sel_active       (input_sel_active),
+        .cal_error        (input_cal_error)
     );
 
 endmodule
