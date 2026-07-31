@@ -156,10 +156,11 @@ module ku115_idelay4_select (
     reg [8:0] idelay_span_1250;
     reg [8:0] odelay_span_1250;
 
-    wire targets_reached = (cur_0 == target_0) &&
-                           (cur_1 == target_1) &&
-                           (cur_2 == target_2) &&
-                           (cur_3 == target_3);
+    wire targets_reached;
+    assign targets_reached = (cur_0 == target_0) &&
+                             (cur_1 == target_1) &&
+                             (cur_2 == target_2) &&
+                             (cur_3 == target_3);
 
     always @(posedge cfg_clk or posedge rst) begin
         if (rst) begin
