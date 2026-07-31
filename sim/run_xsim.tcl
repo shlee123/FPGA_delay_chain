@@ -16,6 +16,7 @@ create_project xsim_delay_chain $build_dir \
 
 add_files [list \
     [file join $repo_dir rtl ku115_odelay4_select.sv] \
+    [file join $repo_dir rtl ku115_idelay4_select.sv] \
     [file join $repo_dir rtl ku115_delay_chain_top.sv]]
 
 add_files -fileset sim_1 \
