@@ -23,6 +23,7 @@ module tb_ku115_delay_chain;
 
     realtime last_clk80_rise;
     realtime last_data_in_rise;
+    realtime last_refclk300_rise;
 
     initial begin : waveform_dump
         string wave_file;
@@ -83,6 +84,20 @@ module tb_ku115_delay_chain;
     always @(posedge data_in)
         last_data_in_rise = $realtime;
 
+    always @(posedge refclk300_in)
+        last_refclk300_rise = $realtime;
+
+    // IDELAYCTRL reset release must occur on a REFCLK rising edge.
+    always @(negedge dut.u_delay_chain.idelayctrl_rst) begin
+        if (($realtime - last_refclk300_rise) > 0.002)
+            $fatal(1, "Output IDELAYCTRL.RST was not released on REFCLK");
+    end
+
+    always @(negedge dut.u_input_delay_chain.idelayctrl_rst) begin
+        if (($realtime - last_refclk300_rise) > 0.002)
+            $fatal(1, "Input IDELAYCTRL.RST was not released on REFCLK");
+    end
+
     always @(ddr_clk_p or ddr_clk_n) begin
         // Let continuous assignments settle before checking both legs.
         #0.001;
@@ -122,7 +137,20 @@ module tb_ku115_delay_chain;
             end
 
             if ((delay_ready !== 1'b1) || (input_delay_ready !== 1'b1))
-                $fatal(1, "Timeout waiting for initial delay calibration");
+                $fatal(1,
+                    {"Timeout waiting for initial delay calibration: ",
+                     "out_state=%0d in_state=%0d out_cnt=%h/%h/%h/%h ",
+                     "in_cnt=%h/%h/%h/%h"},
+                    dut.u_delay_chain.state,
+                    dut.u_input_delay_chain.state,
+                    dut.u_delay_chain.cnt_out_0,
+                    dut.u_delay_chain.cnt_out_1,
+                    dut.u_delay_chain.cnt_out_2,
+                    dut.u_delay_chain.cnt_out_3,
+                    dut.u_input_delay_chain.cnt_out_0,
+                    dut.u_input_delay_chain.cnt_out_1,
+                    dut.u_input_delay_chain.cnt_out_2,
+                    dut.u_input_delay_chain.cnt_out_3);
             if (!idelayctrl_ready || !input_idelayctrl_ready)
                 $fatal(1, "delay_ready asserted before an IDELAYCTRL.RDY");
             if (cal_error || input_cal_error)
@@ -271,8 +299,13 @@ module tb_ku115_delay_chain;
         sel = 2'b00;
         last_clk80_rise = 0.0;
         last_data_in_rise = 0.0;
+        last_refclk300_rise = 0.0;
 
-        repeat (8) @(posedge clk80_in);
+        // glbl.GSR is normally released at 100 ns. Keep the user reset
+        // asserted beyond that point so each UNISIM delay primitive observes
+        // a valid reset after global startup has completed.
+        #200;
+        repeat (4) @(posedge refclk300_in);
         @(negedge clk80_in);
         rst = 1'b0;
 
