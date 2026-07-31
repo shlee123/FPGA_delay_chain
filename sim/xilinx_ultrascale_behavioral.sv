@@ -13,6 +13,13 @@ module BUFG (
     assign O = I;
 endmodule
 
+module IBUF (
+    input  wire I,
+    output wire O
+);
+    assign O = I;
+endmodule
+
 module OBUFDS (
     input  wire I,
     output wire O,
@@ -175,7 +182,11 @@ module IDELAYE3 #(
 
     assign clk_int  = CLK ^ IS_CLK_INVERTED;
     assign rst_int  = RST ^ IS_RST_INVERTED;
-    assign CASC_OUT = CASC_IN;
+    // An IDELAY master launches its selected input onto the dedicated cascade;
+    // middle/end stages only forward the incoming cascade signal.
+    assign CASC_OUT = (CASCADE == "MASTER")
+                    ? ((DELAY_SRC == "IDATAIN") ? IDATAIN : DATAIN)
+                    : CASC_IN;
     assign path_in  = (CASCADE == "SLAVE_END") ? CASC_IN :
                       (CASCADE == "NONE")      ? DATAIN : CASC_RETURN;
 
