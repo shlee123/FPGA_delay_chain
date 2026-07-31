@@ -123,6 +123,9 @@ vivado -mode batch -source scripts/create_project.tcl
 CI 使用輕量的 UltraScale primitive behavioral models，驗證：
 
 - reset 與 `IDELAYCTRL.RDY` 啟動流程
+- delay counter 由 `X` 啟動後，必須由有效的 primitive reset 初始化
+- `IDELAYCTRL.RST` 必須在 `refclk300_in` rising edge 同步解除
+- `EN_VTC=0` 至少 10 個 `cfg_clk` 後才可讀取 `CNTVALUEOUT`
 - `SEL=00 -> 01 -> 10 -> 11 -> 00`
 - 每次切換時兩條路徑的 `delay_ready` 先降為 0，再於 3.8 us 預算內回到 1
 - output/input 的 `sel_active`、`update_busy` 與 `cal_error`
@@ -142,9 +145,16 @@ Icarus 執行完成後會產生
 若電腦已安裝 Synopsys VCS 與 Verdi：
 
 ```console
+export XILINX_VIVADO=/tools/Xilinx/Vivado/2024.1
 bash sim/run-vcs
 make -C sim run_verdi
 ```
+
+VCS flow 會編譯 `$XILINX_VIVADO/data/verilog/src/glbl.v`，並同時以
+`tb_ku115_delay_chain` 與 `glbl` 作為 simulation tops。Testbench 將 user
+reset 保持到 200 ns 之後才解除，避免與 `glbl.GSR` 的預設 startup
+release 重疊。若 Vivado 安裝位置不同，可用 `VIVADO_HOME` 或 `GLBL_SRC`
+覆寫。
 
 VCS 執行時 testbench 會呼叫 `$fsdbDumpfile` 與 `$fsdbDumpvars`，產生
 `sim/build/vcs/tb_ku115_delay_chain.fsdb`；`run_verdi` 會同時開啟 VCS
@@ -159,8 +169,10 @@ Icarus 不支援原生 FSDB，因此開源 CI 使用 VCD；FSDB 僅在
 `SIMULATOR=vcs` 時啟用。
 
 `sim/xilinx_ultrascale_behavioral.sv` 只模擬本專案使用到的 primitive
-功能，並以固定 5 ps/tap 讓 CI 結果可重現。它不能代表實際 silicon、
-PVT、IOB/cascade 固定 insertion delay 或 placement/routing。
+功能，並以固定 5 ps/tap 讓 CI 結果可重現。為了捕捉 startup 問題，
+其 delay counter 會從 `X` 開始，並檢查 IDELAYCTRL reset 的解除時點；
+它仍不能代表實際 silicon、PVT、IOB/cascade 固定 insertion delay 或
+placement/routing。
 
 ### 2. Vivado UNISIM behavioral simulation
 
