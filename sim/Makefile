@@ -5,6 +5,8 @@ FILELIST  ?= filelist.f
 
 BUILD_DIR := build
 MODEL_SRC := xilinx_ultrascale_behavioral.sv
+VIVADO_HOME ?= $(XILINX_VIVADO)
+GLBL_SRC    ?= $(VIVADO_HOME)/data/verilog/src/glbl.v
 
 IVERILOG_BUILD := $(BUILD_DIR)/iverilog
 IVERILOG_EXE   := $(IVERILOG_BUILD)/$(TOP).vvp
@@ -36,8 +38,17 @@ ifeq ($(SIMULATOR),iverilog)
 		$(MODEL_SRC) -f $(FILELIST) $(TESTBENCH)
 else ifeq ($(SIMULATOR),vcs)
 	@mkdir -p $(VCS_BUILD)
+	@test -n "$(VIVADO_HOME)" || { \
+		echo "ERROR: set XILINX_VIVADO or VIVADO_HOME for glbl.v."; \
+		exit 1; \
+	}
+	@test -f "$(GLBL_SRC)" || { \
+		echo "ERROR: Vivado glbl.v not found at $(GLBL_SRC)."; \
+		exit 1; \
+	}
 	$(VCS) $(VCS_OPTS) $(VCS_LIB_OPTS) -DDUMP_FSDB \
-		-top $(TOP) -o $(VCS_EXE) -Mdir=$(VCS_BUILD)/csrc \
+		$(GLBL_SRC) -top $(TOP) -top glbl \
+		-o $(VCS_EXE) -Mdir=$(VCS_BUILD)/csrc \
 		-f $(FILELIST) $(TESTBENCH)
 else
 	$(error Unsupported SIMULATOR='$(SIMULATOR)'; use iverilog or vcs)
