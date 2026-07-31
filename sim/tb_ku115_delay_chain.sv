@@ -5,6 +5,7 @@ module tb_ku115_delay_chain;
     reg        refclk300_in;
     reg        rst;
     reg  [1:0] sel;
+    reg        data_in;
 
     wire       ddr_clk_p;
     wire       ddr_clk_n;
@@ -13,8 +14,15 @@ module tb_ku115_delay_chain;
     wire       idelayctrl_ready;
     wire [1:0] sel_active;
     wire       cal_error;
+    wire       data_to_fabric;
+    wire       input_delay_ready;
+    wire       input_update_busy;
+    wire       input_idelayctrl_ready;
+    wire [1:0] input_sel_active;
+    wire       input_cal_error;
 
     realtime last_clk80_rise;
+    realtime last_data_in_rise;
 
     initial begin : waveform_dump
         string wave_file;
@@ -36,13 +44,20 @@ module tb_ku115_delay_chain;
         .refclk300_in      (refclk300_in),
         .rst               (rst),
         .sel               (sel),
+        .data_in           (data_in),
         .ddr_clk_p         (ddr_clk_p),
         .ddr_clk_n         (ddr_clk_n),
         .delay_ready       (delay_ready),
         .update_busy       (update_busy),
         .idelayctrl_ready  (idelayctrl_ready),
         .sel_active        (sel_active),
-        .cal_error         (cal_error)
+        .cal_error         (cal_error),
+        .data_to_fabric    (data_to_fabric),
+        .input_delay_ready (input_delay_ready),
+        .input_update_busy (input_update_busy),
+        .input_idelayctrl_ready(input_idelayctrl_ready),
+        .input_sel_active  (input_sel_active),
+        .input_cal_error   (input_cal_error)
     );
 
     initial begin
@@ -55,8 +70,18 @@ module tb_ku115_delay_chain;
         forever #1.667 refclk300_in = ~refclk300_in;
     end
 
+    // This is a real input-port stimulus, independent of the forwarded-clock
+    // output path.  It has a 12.5 ns rising-edge period for timing checks.
+    initial begin
+        data_in = 1'b0;
+        forever #6.250 data_in = ~data_in;
+    end
+
     always @(posedge clk80_in)
         last_clk80_rise = $realtime;
+
+    always @(posedge data_in)
+        last_data_in_rise = $realtime;
 
     always @(ddr_clk_p or ddr_clk_n) begin
         // Let continuous assignments settle before checking both legs.
@@ -76,23 +101,37 @@ module tb_ku115_delay_chain;
             $fatal(1, "update_busy must be the inverse of delay_ready");
     end
 
+    always @(input_delay_ready or input_update_busy) begin
+        #0.001;
+        if (((input_delay_ready === 1'b0) ||
+             (input_delay_ready === 1'b1)) &&
+            ((input_update_busy === 1'b0) ||
+             (input_update_busy === 1'b1)) &&
+            (input_update_busy !== ~input_delay_ready))
+            $fatal(1, "input_update_busy must be the inverse of input_delay_ready");
+    end
+
     task automatic wait_initial_ready;
         integer wait_cycles;
         begin
             wait_cycles = 0;
-            while ((delay_ready !== 1'b1) && (wait_cycles < 1600)) begin
+            while (((delay_ready !== 1'b1) ||
+                    (input_delay_ready !== 1'b1)) && (wait_cycles < 1600)) begin
                 @(posedge clk80_in);
                 wait_cycles = wait_cycles + 1;
             end
 
-            if (delay_ready !== 1'b1)
+            if ((delay_ready !== 1'b1) || (input_delay_ready !== 1'b1))
                 $fatal(1, "Timeout waiting for initial delay calibration");
-            if (!idelayctrl_ready)
-                $fatal(1, "delay_ready asserted before IDELAYCTRL.RDY");
-            if (cal_error)
+            if (!idelayctrl_ready || !input_idelayctrl_ready)
+                $fatal(1, "delay_ready asserted before an IDELAYCTRL.RDY");
+            if (cal_error || input_cal_error)
                 $fatal(1, "Calibration entered ST_ERROR");
             if (sel_active !== 2'b00)
                 $fatal(1, "Initial sel_active is %b, expected 00", sel_active);
+            if (input_sel_active !== 2'b00)
+                $fatal(1, "Initial input_sel_active is %b, expected 00",
+                       input_sel_active);
         end
     endtask
 
@@ -140,6 +179,47 @@ module tb_ku115_delay_chain;
         end
     endtask
 
+    task automatic check_input_delay;
+        input [1:0] expected_sel;
+        input realtime expected_delay_ns;
+        realtime edge_1;
+        realtime edge_2;
+        realtime measured_delay;
+        realtime measured_period;
+        realtime delta;
+        begin
+            // Ignore transitions still in flight from the preceding VAR_LOAD.
+            repeat (2) @(posedge data_to_fabric);
+
+            @(posedge data_to_fabric);
+            edge_1         = $realtime;
+            measured_delay = edge_1 - last_data_in_rise;
+
+            @(posedge data_to_fabric);
+            edge_2          = $realtime;
+            measured_period = edge_2 - edge_1;
+
+            if (input_sel_active !== expected_sel)
+                $fatal(1, "input_sel_active=%b, expected %b",
+                       input_sel_active, expected_sel);
+            if (input_cal_error)
+                $fatal(1, "input_cal_error asserted for SEL=%b", expected_sel);
+
+            delta = measured_period - 12.500;
+            if ((delta > 0.003) || (delta < -0.003))
+                $fatal(1, "Input period %.3f ns, expected 12.500 ns",
+                       measured_period);
+
+`ifdef OPEN_SOURCE_SIM
+            delta = measured_delay - expected_delay_ns;
+            if ((delta > 0.003) || (delta < -0.003))
+                $fatal(1,
+                       "Input SEL=%b delay %.3f ns, expected behavioral %.3f ns",
+                       expected_sel, measured_delay, expected_delay_ns);
+`endif
+        end
+    endtask
+
     task automatic select_and_wait;
         input [1:0] requested_sel;
         realtime low_started;
@@ -151,22 +231,24 @@ module tb_ku115_delay_chain;
             sel = requested_sel;
 
             wait_cycles = 0;
-            while ((delay_ready !== 1'b0) && (wait_cycles < 80)) begin
+            while (((delay_ready !== 1'b0) ||
+                    (input_delay_ready !== 1'b0)) && (wait_cycles < 80)) begin
                 @(posedge clk80_in);
                 wait_cycles = wait_cycles + 1;
             end
-            if (delay_ready !== 1'b0)
-                $fatal(1, "delay_ready did not fall for SEL=%b",
+            if ((delay_ready !== 1'b0) || (input_delay_ready !== 1'b0))
+                $fatal(1, "delay_ready did not fall on both paths for SEL=%b",
                        requested_sel);
             low_started = $realtime;
 
             wait_cycles = 0;
-            while ((delay_ready !== 1'b1) && (wait_cycles < 320)) begin
+            while (((delay_ready !== 1'b1) ||
+                    (input_delay_ready !== 1'b1)) && (wait_cycles < 320)) begin
                 @(posedge clk80_in);
                 wait_cycles = wait_cycles + 1;
             end
-            if (delay_ready !== 1'b1)
-                $fatal(1, "delay_ready did not recover for SEL=%b",
+            if ((delay_ready !== 1'b1) || (input_delay_ready !== 1'b1))
+                $fatal(1, "delay_ready did not recover on both paths for SEL=%b",
                        requested_sel);
             low_finished = $realtime;
 
@@ -178,6 +260,9 @@ module tb_ku115_delay_chain;
             if (sel_active !== requested_sel)
                 $fatal(1, "SEL=%b completed with sel_active=%b",
                        requested_sel, sel_active);
+            if (input_sel_active !== requested_sel)
+                $fatal(1, "SEL=%b completed with input_sel_active=%b",
+                       requested_sel, input_sel_active);
         end
     endtask
 
@@ -185,6 +270,7 @@ module tb_ku115_delay_chain;
         rst = 1'b1;
         sel = 2'b00;
         last_clk80_rise = 0.0;
+        last_data_in_rise = 0.0;
 
         repeat (8) @(posedge clk80_in);
         @(negedge clk80_in);
@@ -192,21 +278,26 @@ module tb_ku115_delay_chain;
 
         wait_initial_ready();
         check_forwarded_clock(2'b00, 1.260);
+        check_input_delay(2'b00, 1.260);
 
         select_and_wait(2'b01);
         check_forwarded_clock(2'b01, 2.500);
+        check_input_delay(2'b01, 2.500);
 
         select_and_wait(2'b10);
         check_forwarded_clock(2'b10, 3.760);
+        check_input_delay(2'b10, 3.760);
 
         select_and_wait(2'b11);
         check_forwarded_clock(2'b11, 5.000);
+        check_input_delay(2'b11, 5.000);
 
         select_and_wait(2'b00);
         check_forwarded_clock(2'b00, 1.260);
+        check_input_delay(2'b00, 1.260);
 
         $display("TEST PASSED: reset, calibration, all SEL transitions,");
-        $display("delay_ready timing, forwarded-clock period and delay.");
+        $display("both delay_ready timings, output clock and input delays.");
         $finish;
     end
 endmodule
