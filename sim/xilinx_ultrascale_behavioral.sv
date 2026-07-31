@@ -65,10 +65,22 @@ module IDELAYCTRL #(
     input  wire RST
 );
     integer refclk_count;
+    time last_refclk_rise;
 
     initial begin
         RDY          = 1'b0;
         refclk_count = 0;
+        last_refclk_rise = 0;
+    end
+
+    always @(posedge REFCLK)
+        last_refclk_rise = $time;
+
+    // Match the documented asynchronous-assert/synchronous-release contract.
+    // This makes open-source CI reject a cfg_clk-domain reset release.
+    always @(negedge RST) begin
+        if ($time != last_refclk_rise)
+            $fatal(1, "IDELAYCTRL.RST deasserted away from REFCLK");
     end
 
     always @(posedge REFCLK or posedge RST) begin
@@ -126,8 +138,10 @@ module ODELAYE3 #(
     always @* delay_ps = CNTVALUEOUT * TAP_PS;
 
     initial begin
-        CNTVALUEOUT = INITIAL_TAPS;
-        DATAOUT     = 1'b0;
+        // Vendor models keep startup state unknown until a valid primitive
+        // reset/global-startup sequence initializes the delay counter.
+        CNTVALUEOUT = 9'bx;
+        DATAOUT     = 1'bx;
     end
 
     always @(posedge clk_int or posedge rst_int) begin
@@ -198,8 +212,8 @@ module IDELAYE3 #(
     end
 
     initial begin
-        CNTVALUEOUT = INITIAL_TAPS;
-        DATAOUT     = 1'b0;
+        CNTVALUEOUT = 9'bx;
+        DATAOUT     = 1'bx;
     end
 
     always @(posedge clk_int or posedge rst_int) begin
