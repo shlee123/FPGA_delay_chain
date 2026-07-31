@@ -162,14 +162,31 @@ module ku115_odelay4_select (
     localparam [3:0] ST_WAIT_10     = 4'd10;
     localparam [3:0] ST_READY       = 4'd11;
     localparam [3:0] ST_ERROR       = 4'd12;
+    localparam [3:0] ST_CALCULATE   = 4'd13;
 
     reg [3:0] state;
     reg [6:0] wait_count;
 
     reg       delay_rst;
-    reg       idelayctrl_rst;
+    reg       idelayctrl_rst_req;
     reg       en_vtc;
     reg       load_all;
+    reg       initial_capture_pending;
+
+    // IDELAYCTRL reset may assert asynchronously, but its release must be
+    // synchronous to REFCLK. The cfg_clk FSM drives a request; this
+    // synchronizer performs the required REFCLK-domain release.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] idelayctrl_rst_sync;
+    wire idelayctrl_rst;
+
+    always @(posedge refclk_300 or posedge idelayctrl_rst_req) begin
+        if (idelayctrl_rst_req)
+            idelayctrl_rst_sync <= 2'b11;
+        else
+            idelayctrl_rst_sync <= {idelayctrl_rst_sync[0], 1'b0};
+    end
+
+    assign idelayctrl_rst = idelayctrl_rst_sync[1];
 
     reg [1:0] sel_work;
     reg [2:0] numerator;
@@ -200,19 +217,21 @@ module ku115_odelay4_select (
     reg [8:0] idelay_span_1250;
 
     wire targets_reached;
-    assign targets_reached = (cur_0 == target_0) &&
-                             (cur_1 == target_1) &&
-                             (cur_2 == target_2) &&
-                             (cur_3 == target_3);
+    // Verify the primitive readback instead of only the requested value.
+    assign targets_reached = (cnt_out_0 == target_0) &&
+                             (cnt_out_1 == target_1) &&
+                             (cnt_out_2 == target_2) &&
+                             (cnt_out_3 == target_3);
 
     always @(posedge cfg_clk or posedge rst) begin
         if (rst) begin
             state               <= ST_RESET;
             wait_count          <= 7'd0;
             delay_rst           <= 1'b1;
-            idelayctrl_rst      <= 1'b1;
+            idelayctrl_rst_req  <= 1'b1;
             en_vtc              <= 1'b1;
             load_all            <= 1'b0;
+            initial_capture_pending <= 1'b1;
             delay_ready         <= 1'b0;
             cal_error           <= 1'b0;
             sel_active          <= 2'b00;
@@ -243,22 +262,24 @@ module ku115_odelay4_select (
                 (state >= ST_CAPTURE) &&
                 (state != ST_ERROR)) begin
                 delay_rst      <= 1'b1;
-                idelayctrl_rst <= 1'b1;
+                idelayctrl_rst_req <= 1'b1;
                 en_vtc         <= 1'b1;
                 delay_ready    <= 1'b0;
+                initial_capture_pending <= 1'b1;
                 state          <= ST_RESET;
             end else case (state)
                 ST_RESET: begin
                     // Release delay elements before IDELAYCTRL, per UG571.
                     delay_rst  <= 1'b0;
                     en_vtc     <= 1'b1;
+                    initial_capture_pending <= 1'b1;
                     wait_count <= 7'd0;
                     state      <= ST_RELEASE_DLY;
                 end
 
                 ST_RELEASE_DLY: begin
                     if (wait_count == 7'd3) begin
-                        idelayctrl_rst <= 1'b0;
+                        idelayctrl_rst_req <= 1'b0;
                         wait_count     <= 7'd0;
                         state          <= ST_WAIT_RDY;
                     end else begin
@@ -277,7 +298,22 @@ module ku115_odelay4_select (
                     if (!rdy_sync) begin
                         state <= ST_WAIT_RDY;
                     end else if (wait_count == 7'd63) begin
-                        state <= ST_CAPTURE;
+                        // UG571 VAR_LOAD/TIME sequence: stop VT compensation
+                        // and wait 10 cfg_clk cycles before sampling taps.
+                        en_vtc     <= 1'b0;
+                        wait_count <= 7'd0;
+                        state      <= ST_QUIESCE;
+                    end else begin
+                        wait_count <= wait_count + 7'd1;
+                    end
+                end
+
+                ST_QUIESCE: begin
+                    delay_ready <= 1'b0;
+                    if (wait_count == 7'd9) begin
+                        wait_count <= 7'd0;
+                        state      <= initial_capture_pending
+                                    ? ST_CAPTURE : ST_CALCULATE;
                     end else begin
                         wait_count <= wait_count + 7'd1;
                     end
@@ -289,6 +325,14 @@ module ku115_odelay4_select (
                     //   stage 2/3 = 1250 ps
                     // Their differences establish nominal taps per 1250 ps;
                     // the IDELAY subtraction also removes Align_Delay.
+`ifndef SYNTHESIS
+                    if ((^{cnt_out_0, cnt_out_1,
+                           cnt_out_2, cnt_out_3}) === 1'bx) begin
+                        $fatal(1,
+                            "ODELAY chain CNTVALUEOUT is unknown: %h %h %h %h",
+                            cnt_out_0, cnt_out_1, cnt_out_2, cnt_out_3);
+                    end else
+`endif
                     if ((cnt_out_2 <= cnt_out_0) ||
                         (cnt_out_3 <= cnt_out_1)) begin
                         cal_error   <= 1'b1;
@@ -307,17 +351,13 @@ module ku115_odelay4_select (
 
                         sel_work   <= sel_sync;
                         numerator  <= sel_numerator(sel_sync);
-                        en_vtc     <= 1'b0;
+                        initial_capture_pending <= 1'b0;
                         wait_count <= 7'd0;
-                        state      <= ST_QUIESCE;
+                        state      <= ST_CALCULATE;
                     end
                 end
 
-                ST_QUIESCE: begin
-                    // EN_VTC must be Low for at least 10 cfg_clk cycles before
-                    // modifying a TIME-mode delay line.
-                    delay_ready <= 1'b0;
-                    if (wait_count == 7'd9) begin
+                ST_CALCULATE: begin
                         // 1250 ps is the legal TIME-mode endpoint. Reject a
                         // calibrated endpoint that would overflow 9-bit taps
                         // instead of silently accepting the saturated value.
@@ -346,9 +386,6 @@ module ku115_odelay4_select (
                             wait_count <= 7'd0;
                             state      <= ST_SET_VALUE;
                         end
-                    end else begin
-                        wait_count <= wait_count + 7'd1;
-                    end
                 end
 
                 ST_SET_VALUE: begin
@@ -363,10 +400,6 @@ module ku115_odelay4_select (
 
                 ST_LOAD: begin
                     load_all <= 1'b1;
-                    cur_0    <= cnt_in_0;
-                    cur_1    <= cnt_in_1;
-                    cur_2    <= cnt_in_2;
-                    cur_3    <= cnt_in_3;
                     wait_count <= 7'd0;
                     state      <= ST_WAIT_5;
                 end
@@ -381,6 +414,18 @@ module ku115_odelay4_select (
                 end
 
                 ST_CHECK: begin
+`ifndef SYNTHESIS
+                    if ((^{cnt_out_0, cnt_out_1,
+                           cnt_out_2, cnt_out_3}) === 1'bx) begin
+                        $fatal(1,
+                            "ODELAY chain LOAD readback is unknown: %h %h %h %h",
+                            cnt_out_0, cnt_out_1, cnt_out_2, cnt_out_3);
+                    end
+`endif
+                    cur_0 <= cnt_out_0;
+                    cur_1 <= cnt_out_1;
+                    cur_2 <= cnt_out_2;
+                    cur_3 <= cnt_out_3;
                     if (targets_reached) begin
                         wait_count <= 7'd0;
                         state      <= ST_WAIT_10;
