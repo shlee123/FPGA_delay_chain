@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   behavioral:
-    name: Icarus behavioral simulation
+    name: Icarus X-startup behavioral simulation
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -28,7 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes iverilog
 
-      - name: Compile and run self-checking testbench
+      - name: Compile and run X-startup self-checking testbench
         if: hashFiles('sim/Makefile') != ''
         run: make -C sim SIMULATOR=iverilog sim
 
