@@ -44,22 +44,6 @@ module ku115_delay_chain_top (
         .O (refclk300)
     );
 
-    // The component-mode I/O delay reset may assert asynchronously, but its
-    // release is delayed and synchronized to the stable IDELAYCTRL REFCLK.
-    // This also keeps the delay primitives in reset for four complete REFCLK
-    // cycles after the external reset is removed.
-    (* ASYNC_REG = "TRUE" *) reg [3:0] delay_rst_pipe;
-    wire delay_chain_rst;
-
-    always @(posedge refclk300 or posedge rst) begin
-        if (rst)
-            delay_rst_pipe <= 4'hf;
-        else
-            delay_rst_pipe <= {delay_rst_pipe[2:0], 1'b0};
-    end
-
-    assign delay_chain_rst = delay_rst_pipe[3];
-
     // Generate a 50% duty-cycle, 80 MHz forwarded clock in the output logic.
     ODDRE1 #(
         .IS_C_INVERTED (1'b0),
@@ -72,14 +56,14 @@ module ku115_delay_chain_top (
         .C  (clk80),
         .D1 (1'b1),
         .D2 (1'b0),
-        .SR (delay_chain_rst)
+        .SR (rst)
     );
 
     ku115_odelay4_select u_delay_chain (
         .data_in          (fwd_clk_raw),
         .cfg_clk          (clk80),
         .refclk_300       (refclk300),
-        .rst              (delay_chain_rst),
+        .rst              (rst),
         .sel              (sel),
         .data_out         (fwd_clk_delayed),
         .delay_ready      (delay_ready),
@@ -97,7 +81,7 @@ module ku115_delay_chain_top (
         .OB (ddr_clk_n)
     );
 
-    // Keep the input-port connection in the I/O path. The output of the
+    // Keep the input-port connection in the I/O path.  The output of the
     // four-element cascade is a fabric signal; do not insert a LUT or fabric
     // mux between this IBUF and u_input_delay_chain.
     IBUF u_data_in_ibuf (
@@ -109,7 +93,7 @@ module ku115_delay_chain_top (
         .data_in          (data_in_buffered),
         .cfg_clk          (clk80),
         .refclk_300       (refclk300),
-        .rst              (delay_chain_rst),
+        .rst              (rst),
         .sel              (sel),
         .data_out         (data_to_fabric),
         .delay_ready      (input_delay_ready),
