@@ -20,9 +20,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y iverilog
       - name: Run delay-chain simulation
         working-directory: sim
-        run: make SIMULATOR=iverilog clean sim | tee iverilog.log
+        shell: bash
+        run: |
+          set -o pipefail
+          make SIMULATOR=iverilog clean sim 2>&1 | tee iverilog.log
       - name: Check result
         working-directory: sim
+        shell: bash
         run: |
           grep -q "TEST PASSED" iverilog.log
           ! grep -Eiq "(^|[^A-Za-z])(fatal|error)([^A-Za-z]|$)" iverilog.log
